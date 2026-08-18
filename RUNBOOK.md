@@ -1,0 +1,109 @@
+# Facilitator leaderboard runbook
+
+Operating guide for running the optional alias-only workshop leaderboard during a
+`ghcp-dev-hack` delivery. Pair it with `README.md`, which documents the kit
+itself.
+
+## Environments
+
+| Environment | Event repository | Standings site |
+| --- | --- | --- |
+| Test | `mfm-se-dev-org/ghcp-dev-hack-leaderboard` (private) | `https://expert-adventure-386owy8.pages.github.io/` |
+| Production | `tammym-demos/ghcp-dev-hack-leaderboard` (public) | `https://tammym-demos.github.io/ghcp-dev-hack-leaderboard/` |
+
+The test repository is private, so its Pages site uses a scrambled hostname and
+requires a signed-in account with repository access. Only organization members
+can open submission issues there; it is an instructor rehearsal environment, not
+a participant environment. The production repository is public so external
+participants can submit.
+
+These values are declared once in `workshops/ghcp-dev-hack/workshop.md` under
+`leaderboard.environments`. The portal build selects one with the
+`WORKSHOP_ENVIRONMENT` variable, which defaults to `test`; the public release
+build sets `production`. Update `workshop.md` if either repository moves, then
+rebuild the portal.
+
+## Before the event
+
+1. Create the event repository. It must be separate from the workshop content
+   repository so participant issues never touch workshop source.
+2. Copy the contents of this kit into the repository root.
+3. Enable **Issues** and **Actions**.
+4. In **Settings → Pages**, set the source to **GitHub Actions**.
+5. Create the two labels used by the workflow:
+   - `leaderboard-submission` — applied automatically by the issue form.
+   - `verified-score` — applied only by you.
+6. Confirm `leaderboard.config.json` has the right `event.id` and
+   `event.state: open`.
+7. Run the workflow once with **Run workflow** (`workflow_dispatch`) and confirm
+   the Pages site publishes an empty board.
+8. Submit one throwaway issue with a disposable alias, confirm it appears in
+   **Provisional standings**, then close that issue and confirm it disappears.
+9. Confirm the portal shows the **Leaderboard** button and that each mission page
+   shows **Submit your score**.
+
+## During the event
+
+- Project the standings page. It reloads every 60 seconds
+  (`pages.refreshSeconds`), so a new submission appears within roughly a minute
+  of its build completing.
+- **Provisional standings** are self-reported and update immediately.
+- **Verified standings** count only submissions carrying `verified-score`.
+- Participants submit **one issue per module**: Foundations, Agentic, Advanced.
+- Foundations core clues are worth 5, 10, 10, 10, and 15 points, so Foundations
+  accepts 5-point values such as 45. Agentic and Advanced accept 10-point values.
+- Bonus is capped at 10 per module. The maximum cumulative score is 180.
+- Verification cadence: verify at each module debrief rather than continuously.
+  Spot-check the participant's exported case file, then apply `verified-score`.
+- Corrections: the participant edits their own issue. Withdrawal: the participant
+  closes it. Re-entry: reopen or submit a newer issue.
+- If two participants pick the same alias, the builder withholds both from the
+  published board until one alias changes. Ask them to edit their issues.
+
+## Known and intentional limitation
+
+The published board is alias-only, so it cannot show who has **not** submitted,
+and it cannot be mapped back to a person. That is deliberate: no participant
+identity, evidence, prompt, diff, or repository content is ever published. Track
+room progress by asking the room, not by trying to de-anonymize the board.
+
+## Invalid submissions
+
+The build counts invalid submissions in the summary but never publishes their
+content. Common causes:
+
+- wrong or missing event id
+- alias outside the 3-24 character policy
+- unrecognized module
+- a score that violates the module's range or increment
+- a missing self-report or privacy acknowledgement
+
+Ask the participant to edit their issue; the next build picks up the correction.
+
+## Closing the event
+
+1. Set `event.state` to `closed` in `leaderboard.config.json` and commit.
+2. Run the workflow once manually.
+3. The winner section then publishes the highest **verified** cumulative total.
+   Tied participants are announced as co-winners; there is no speed tie-breaker.
+4. Download and retain the final Pages artifact if you need an event archive.
+5. Optionally disable the issue form or archive the repository.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Submission missing from the board | Issue is open, carries `leaderboard-submission`, and the build summary does not count it as invalid |
+| Board not updating | Actions run history for the latest `Publish leaderboard artifact` run and the Pages deployment |
+| Pages deployment fails | Pages source is **GitHub Actions** and the `github-pages` environment allows the deploy job |
+| Participant reports a rejected score | Confirm the module's increment rule and the 0-50 core / 0-10 bonus ranges |
+| Alias missing entirely | Alias conflict withholding; two participants share one alias |
+
+## Local rehearsal
+
+```powershell
+npm test
+node src/build-leaderboard.mjs --config leaderboard.config.json --input fixtures/sample-issues.json --out sample-site
+```
+
+The sample build uses synthetic aliases only and never contacts GitHub.

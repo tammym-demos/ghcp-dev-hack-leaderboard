@@ -33,6 +33,14 @@ rebuild the portal.
 5. Create the two labels used by the workflow:
    - `leaderboard-submission` — applied automatically by the issue form.
    - `verified-score` — applied only by you.
+
+   `pnpm content publish-leaderboard` now creates both labels if they are
+   missing, so this step is a verification rather than manual setup. It still
+   matters: an issue form **silently drops a label that does not exist in the
+   repository**, so a submission raised before the labels exist stays
+   unlabelled and no later build will ever see it. If the publish command
+   warns that it could not manage labels, its token is missing Issues read and
+   write; create them by hand before the event.
 6. Confirm `leaderboard.config.json` has the right `event.id` and
    `event.state: open`.
 7. Run the workflow once with **Run workflow** (`workflow_dispatch`) and confirm
@@ -95,6 +103,7 @@ Ask the participant to edit their issue; the next build picks up the correction.
 | --- | --- |
 | Submission missing from the board | Issue is open, carries `leaderboard-submission`, and the build summary does not count it as invalid |
 | Board not updating | Actions run history for the latest `Publish leaderboard artifact` run and the Pages deployment |
+| Run succeeds but the board stays empty | Open the run log and read `Issues scanned`. If it is `0` while an open submission exists, the submission is unlabelled: the `leaderboard-submission` label did not exist when the issue was raised, so the form dropped it and the build's label query never returns it. Create the label, then add it to the existing issues, which retriggers the build |
 | Pages deployment fails | Pages source is **GitHub Actions** and the `github-pages` environment allows the deploy job |
 | Participant reports a rejected score | Confirm the module's increment rule and the 0-50 core / 0-10 bonus ranges |
 | Alias missing entirely | Alias conflict withholding; two participants share one alias |

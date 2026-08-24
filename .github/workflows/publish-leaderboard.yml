@@ -10,6 +10,10 @@ on:
       - reopened
       - closed
   workflow_dispatch:
+  schedule:
+    # Roll the board over to a new event shortly after midnight in America/New_York,
+    # so a new hack starts on an empty board before its first submission arrives.
+    - cron: '10 5 * * *'
 
 permissions:
   contents: read

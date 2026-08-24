@@ -1,8 +1,8 @@
 {
   "event": {
-    "id": "ghcp-dev-hack",
+    "slug": "ghcp-dev-hack",
     "name": "GHCP Dev Hack Workshop Leaderboard",
-    "state": "open"
+    "timeZone": "America/New_York"
   },
   "pages": {
     "title": "GHCP Dev Hack Workshop Leaderboard",

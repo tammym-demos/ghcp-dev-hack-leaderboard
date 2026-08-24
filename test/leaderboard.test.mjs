@@ -2,14 +2,24 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   aggregateLeaderboard,
+  buildEventId,
+  buildEventsIndexHtml,
   buildHtml,
   createPublicReport,
   escapeHtml,
   evaluateIssueSubmission,
+  formatDateInTimeZone,
   parseIssueFormBody,
+  resolveEventDate,
   validateConfig
 } from '../src/leaderboard.mjs';
 import config from '../leaderboard.config.json' with { type: 'json' };
+
+/**
+ * Every fixture issue below is created on this day, so pinning it keeps the tests
+ * deterministic no matter when they run.
+ */
+const PINNED_EVENT_DATE = '2026-08-01';
 
 function makeIssue({
   number,
@@ -19,7 +29,6 @@ function makeIssue({
   labels = ['leaderboard-submission'],
   updatedAt,
   createdAt = updatedAt,
-  eventId = config.event.id,
   alias = 'Sample Alias',
   module = 'Foundations',
   core = '40',
@@ -45,11 +54,7 @@ function makeIssue({
       login,
       id: userId
     },
-    body: `### Event ID
-
-${eventId}
-
-### Opt-in Alias
+    body: `### Opt-in Alias
 
 ${alias}
 
@@ -77,10 +82,12 @@ ${extraSections}`
 }
 
 function cloneConfig(overrides = {}) {
-  return structuredClone({
+  const cloned = structuredClone({
     ...config,
     ...overrides
   });
+  cloned.event = { ...cloned.event, date: cloned.event.date ?? PINNED_EVENT_DATE };
+  return cloned;
 }
 
 test('rejects non-positive score increments', () => {
@@ -155,7 +162,6 @@ test('enforces caps, increments, headings, and acknowledgements', () => {
       module: 'Unknown',
       core: '35',
       bonus: '15',
-      eventId: 'wrong-event',
       includePrivacy: false,
       extraSections: `
 
@@ -167,7 +173,6 @@ Contoso`
   );
 
   assert.equal(evaluated.valid, false);
-  assert.ok(evaluated.reasons.some((reason) => reason.includes('Event id')));
   assert.ok(evaluated.reasons.some((reason) => reason.includes('Alias')));
   assert.ok(evaluated.reasons.some((reason) => reason.includes('Module')));
   assert.ok(evaluated.reasons.some((reason) => reason.includes('Core points')));
@@ -221,7 +226,8 @@ test('announces co-winners only after event close and requires all verified comp
   const closedConfig = cloneConfig({
     event: {
       ...config.event,
-      state: 'closed'
+      date: PINNED_EVENT_DATE,
+      closedOn: PINNED_EVENT_DATE
     }
   });
   const report = aggregateLeaderboard({
@@ -267,7 +273,7 @@ test('escapes HTML output', () => {
 test('parses only known headings', () => {
   const sections = parseIssueFormBody(`### Event ID
 
-${config.event.id}
+ghcp-dev-hack
 
 ### Employer
 
@@ -412,4 +418,150 @@ test('reports a generated timestamp and a welcoming empty board', () => {
   assert.ok(html.includes(`datetime="${empty.generatedAt}"`), 'the page states when it was built');
   assert.ok(html.includes('Be the first'), 'an empty board invites a first submission');
   assert.ok(!html.includes('<table'));
+});
+
+test('derives the current event from the calendar day in the event time zone', () => {
+  const rolling = structuredClone(config);
+  delete rolling.event.date;
+
+  // 03:30 UTC on 2 August is still 1 August in America/New_York.
+  const lateEvening = Date.parse('2026-08-02T03:30:00Z');
+  assert.equal(resolveEventDate(rolling, lateEvening), '2026-08-01');
+  assert.equal(formatDateInTimeZone(lateEvening, 'UTC'), '2026-08-02');
+
+  const pinned = cloneConfig();
+  assert.equal(resolveEventDate(pinned, Date.now()), PINNED_EVENT_DATE);
+  assert.equal(buildEventId(pinned, '2026-08-01'), 'ghcp-dev-hack-2026-08-01');
+});
+
+test('rejects an invalid time zone, slug, or pinned date', () => {
+  assert.throws(() => validateConfig(cloneConfig({ event: { ...config.event, timeZone: 'Mars/Olympus' } })), /valid IANA time zone/);
+  assert.throws(() => validateConfig(cloneConfig({ event: { ...config.event, timeZone: '' } })), /event\.timeZone is required/);
+  assert.throws(() => validateConfig(cloneConfig({ event: { ...config.event, slug: 'Not Kebab' } })), /event\.slug must be lowercase kebab-case/);
+  assert.throws(() => validateConfig(cloneConfig({ event: { ...config.event, date: '08-01-2026' } })), /event\.date must be omitted or a YYYY-MM-DD/);
+});
+
+test('scores only the current day and archives earlier days', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 100, login: 'today-001', userId: 2001, updatedAt: '2026-08-01T10:00:00Z', alias: 'Today Runner', module: 'Foundations', core: '40', bonus: '10' }),
+      makeIssue({ number: 101, login: 'past-001', userId: 2002, updatedAt: '2026-07-28T10:00:00Z', alias: 'Past Runner', module: 'Foundations', core: '50', bonus: '10' }),
+      makeIssue({ number: 102, login: 'past-002', userId: 2003, updatedAt: '2026-07-28T11:00:00Z', alias: 'Past Rival', module: 'Foundations', core: '40', bonus: '0' })
+    ]
+  });
+
+  assert.equal(report.event.id, 'ghcp-dev-hack-2026-08-01');
+  assert.equal(report.event.date, '2026-08-01');
+  assert.deepEqual(report.provisionalStandings.map((row) => row.alias), ['Today Runner']);
+  assert.equal(report.summary.issuesScanned, 1, 'the current board only counts its own day');
+  assert.equal(report.totalIssuesScanned, 3, 'the operator log still sees every fetched issue');
+
+  assert.equal(report.pastEvents.length, 1);
+  const [past] = report.pastEvents;
+  assert.equal(past.event.date, '2026-07-28');
+  assert.equal(past.event.id, 'ghcp-dev-hack-2026-07-28');
+  assert.equal(past.event.state, 'closed', 'an archived board is always final');
+  assert.deepEqual(past.provisionalStandings.map((row) => row.alias), ['Past Runner', 'Past Rival']);
+});
+
+test('keeps a future-dated submission off an archived board', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 110, login: 'ahead-001', userId: 2010, updatedAt: '2026-08-09T10:00:00Z', alias: 'Ahead Of Time', module: 'Foundations', core: '40', bonus: '10' })
+    ]
+  });
+
+  assert.equal(report.provisionalStandings.length, 0);
+  assert.equal(report.pastEvents.length, 0, 'only earlier days become archives');
+});
+
+test('does not archive a past day that has nobody left on the board', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 120, login: 'junk-001', userId: 2020, updatedAt: '2026-07-20T10:00:00Z', alias: 'x', module: 'Nonsense', core: '37', bonus: '3' }),
+      // A valid submission that was later withdrawn leaves its day with nothing to show.
+      makeIssue({ number: 121, login: 'gone-001', userId: 2021, updatedAt: '2026-07-21T10:00:00Z', alias: 'Withdrawn Runner', module: 'Foundations', core: '40', bonus: '10', state: 'closed' })
+    ]
+  });
+
+  assert.equal(report.pastEvents.length, 0, 'neither a malformed nor a fully withdrawn day publishes an archive');
+});
+
+test('scopes alias conflicts to one event so an alias can be reused later', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 130, login: 'clash-001', userId: 2030, updatedAt: '2026-08-01T10:00:00Z', alias: 'Shared Alias', module: 'Foundations', core: '40', bonus: '10' }),
+      makeIssue({ number: 131, login: 'clash-002', userId: 2031, updatedAt: '2026-08-01T10:05:00Z', alias: 'Shared Alias', module: 'Foundations', core: '50', bonus: '0' }),
+      makeIssue({ number: 132, login: 'earlier-001', userId: 2032, updatedAt: '2026-07-25T10:00:00Z', alias: 'Shared Alias', module: 'Foundations', core: '40', bonus: '10' })
+    ]
+  });
+
+  assert.equal(report.summary.withheldParticipants, 2, 'a same-day alias clash is withheld');
+  assert.equal(report.provisionalStandings.length, 0);
+
+  const [past] = report.pastEvents;
+  assert.deepEqual(past.provisionalStandings.map((row) => row.alias), ['Shared Alias'], 'the same alias stands on an earlier day');
+});
+
+test('links past events and renders an archived board as final', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 140, login: 'now-001', userId: 2040, updatedAt: '2026-08-01T10:00:00Z', alias: 'Current Alias', module: 'Foundations', core: '40', bonus: '10' }),
+      makeIssue({ number: 141, login: 'then-001', userId: 2041, updatedAt: '2026-07-30T10:00:00Z', alias: 'Archived Alias', module: 'Foundations', core: '40', bonus: '10' })
+    ]
+  });
+  const currentHtml = buildHtml(report);
+  const archiveHtml = buildHtml(report.pastEvents[0], { archive: true });
+  const indexHtml = buildEventsIndexHtml(report);
+
+  assert.ok(currentHtml.includes('href="events/"'), 'the live board links to its history');
+  assert.ok(currentHtml.includes('Past events (1)'));
+  assert.ok(currentHtml.includes('http-equiv="refresh"'), 'the live board keeps refreshing');
+
+  assert.ok(archiveHtml.includes('2026-07-30'));
+  assert.ok(!archiveHtml.includes('http-equiv="refresh"'), 'a final board does not poll');
+  assert.ok(archiveHtml.includes('href="../../"'), 'an archive links back to the live board');
+  assert.ok(archiveHtml.includes('This event is closed'));
+
+  assert.ok(indexHtml.includes('href="./2026-07-30/"'));
+  assert.ok(indexHtml.includes('1 player'));
+
+  assert.deepEqual(createPublicReport(report).pastEvents, [{ id: 'ghcp-dev-hack-2026-07-30', date: '2026-07-30' }]);
+});
+
+test('tags each submission with the day it was created', () => {
+  const evaluated = evaluateIssueSubmission(
+    makeIssue({ number: 150, login: 'tagged-001', userId: 2050, updatedAt: '2026-08-05T12:00:00Z', createdAt: '2026-08-02T03:30:00Z', alias: 'Tagged Alias', module: 'Foundations', core: '40', bonus: '10' }),
+    cloneConfig()
+  );
+
+  assert.equal(evaluated.valid, true);
+  assert.equal(evaluated.eventDate, '2026-08-01', 'the creation day decides the event, and a later edit cannot move it');
+});
+
+test('ignores a closed marker left over from a previous hack', () => {
+  const staleClose = cloneConfig({
+    event: {
+      ...config.event,
+      date: PINNED_EVENT_DATE,
+      closedOn: '2026-07-04'
+    }
+  });
+  const report = aggregateLeaderboard({
+    config: staleClose,
+    issues: [makeIssue({ number: 160, login: 'fresh-001', userId: 2060, updatedAt: '2026-08-01T10:00:00Z', alias: 'Fresh Start', module: 'Foundations', core: '40', bonus: '10' })]
+  });
+
+  assert.equal(report.event.state, 'open', 'a new hack never opens onto a closed board');
+  assert.ok(!buildHtml(report).includes('This event is closed'));
+
+  assert.throws(
+    () => validateConfig(cloneConfig({ event: { ...config.event, closedOn: 'yesterday' } })),
+    /event\.closedOn must be omitted or a YYYY-MM-DD/
+  );
 });

@@ -2,7 +2,6 @@ import path from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 export const ISSUE_HEADINGS = Object.freeze({
-  eventId: 'Event ID',
   alias: 'Opt-in Alias',
   module: 'Module',
   core: 'Core Points',
@@ -10,6 +9,44 @@ export const ISSUE_HEADINGS = Object.freeze({
   selfReport: 'Self-Report Acknowledgement',
   privacy: 'Privacy Acknowledgement'
 });
+
+const EVENT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Renders an instant as a calendar date in the event timezone. `en-CA` is used because it
+ * formats as YYYY-MM-DD natively, which avoids assembling the parts by hand.
+ */
+export function formatDateInTimeZone(timestampMs, timeZone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date(timestampMs));
+}
+
+/**
+ * The calendar day in the event timezone is the event. An explicit `event.date` pins the
+ * current event for a rehearsal or a hack that runs past local midnight; without it the
+ * board rolls over on its own and no per-event edit is ever needed.
+ */
+export function resolveEventDate(config, now = Date.now()) {
+  if (config.event.date) return config.event.date;
+  return formatDateInTimeZone(now, config.event.timeZone);
+}
+
+/**
+ * A board is closed only on the exact day the facilitator closed it. Tying the closed state
+ * to a date rather than a boolean means a value left over from a previous hack is ignored
+ * automatically, so the next hack can never open onto a board that announces itself closed.
+ */
+export function resolveEventState(config, eventDate) {
+  return config.event.closedOn === eventDate ? 'closed' : 'open';
+}
+
+export function buildEventId(config, eventDate) {
+  return `${config.event.slug}-${eventDate}`;
+}
 
 const REQUIRED_MODULE_IDS = ['foundations', 'agentic', 'advanced'];
 
@@ -36,12 +73,26 @@ export function validateConfig(config, sourceLabel = 'config') {
     throw new Error(`${sourceLabel}: modules must be Foundations, Agentic, and Advanced in order.`);
   }
 
-  if (!config.event?.id || !/^[a-z0-9-]+$/.test(config.event.id)) {
-    throw new Error(`${sourceLabel}: event.id must be lowercase kebab-case.`);
+  if (!config.event?.slug || !/^[a-z0-9-]+$/.test(config.event.slug)) {
+    throw new Error(`${sourceLabel}: event.slug must be lowercase kebab-case.`);
   }
 
-  if (!['open', 'closed'].includes(config.event?.state)) {
-    throw new Error(`${sourceLabel}: event.state must be "open" or "closed".`);
+  if (typeof config.event?.timeZone !== 'string' || config.event.timeZone === '') {
+    throw new Error(`${sourceLabel}: event.timeZone is required, for example America/New_York.`);
+  }
+
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: config.event.timeZone });
+  } catch {
+    throw new Error(`${sourceLabel}: event.timeZone must be a valid IANA time zone.`);
+  }
+
+  if (config.event.date !== undefined && !EVENT_DATE_PATTERN.test(config.event.date)) {
+    throw new Error(`${sourceLabel}: event.date must be omitted or a YYYY-MM-DD calendar date.`);
+  }
+
+  if (config.event.closedOn !== undefined && config.event.closedOn !== null && !EVENT_DATE_PATTERN.test(config.event.closedOn)) {
+    throw new Error(`${sourceLabel}: event.closedOn must be omitted or a YYYY-MM-DD calendar date.`);
   }
 
   if (!config.labels?.submission || !config.labels?.verified) {
@@ -168,16 +219,13 @@ export function evaluateIssueSubmission(issue, config) {
   const bonus = parseIntegerField(sections.get(ISSUE_HEADINGS.bonus));
   const authorKey = getAuthorKey(issue);
   const updatedAtMs = Date.parse(issue?.updated_at ?? issue?.created_at ?? '1970-01-01T00:00:00.000Z');
+  const createdAtMs = Date.parse(issue?.created_at ?? '1970-01-01T00:00:00.000Z') || 0;
   const aliasPattern = new RegExp(config.aliasPolicy.pattern);
 
   for (const heading of Object.values(ISSUE_HEADINGS)) {
     if (!sections.has(heading)) {
       reasons.push(`Missing heading: ${heading}`);
     }
-  }
-
-  if (sections.get(ISSUE_HEADINGS.eventId) !== config.event.id) {
-    reasons.push('Event id does not match configuration.');
   }
 
   if (alias.length < config.aliasPolicy.minLength || alias.length > config.aliasPolicy.maxLength || !aliasPattern.test(alias)) {
@@ -205,7 +253,8 @@ export function evaluateIssueSubmission(issue, config) {
     issueNumber: issue?.number ?? 0,
     authorKey,
     updatedAtMs: Number.isFinite(updatedAtMs) ? updatedAtMs : 0,
-    createdAtMs: Date.parse(issue?.created_at ?? '1970-01-01T00:00:00.000Z') || 0,
+    createdAtMs,
+    eventDate: formatDateInTimeZone(createdAtMs, config.event.timeZone),
     state: issue?.state === 'closed' ? 'closed' : 'open',
     labels,
     verified: labels.includes(config.labels.verified),
@@ -285,15 +334,48 @@ function isChecked(value) {
   return /\[[xX]\]/.test(String(value ?? ''));
 }
 
-export function aggregateLeaderboard({ issues, config }) {
+export function aggregateLeaderboard({ issues, config, now = Date.now() }) {
   validateConfig(config, 'config');
 
+  const currentEventDate = resolveEventDate(config, now);
   const evaluated = issues.map((issue) => evaluateIssueSubmission(issue, config));
-  const valid = evaluated.filter((submission) => submission.valid);
+  const byEventDate = new Map();
+
+  for (const submission of evaluated) {
+    const bucket = byEventDate.get(submission.eventDate) ?? [];
+    bucket.push(submission);
+    byEventDate.set(submission.eventDate, bucket);
+  }
+
+  const current = buildEventReport({
+    config,
+    eventDate: currentEventDate,
+    state: resolveEventState(config, currentEventDate),
+    submissions: byEventDate.get(currentEventDate) ?? []
+  });
+
+  /*
+   * Every earlier day that still has someone on the board becomes a read-only archive.
+   * The test is a published participant rather than merely a valid submission, because a day
+   * whose only submissions were later withdrawn has nothing to show and would otherwise
+   * publish an empty phantom event. Archives always render closed so their winners are
+   * announced even if the facilitator never closed the board on the day.
+   */
+  const pastEvents = [...byEventDate.entries()]
+    .filter(([eventDate]) => eventDate < currentEventDate)
+    .sort(([left], [right]) => right.localeCompare(left))
+    .map(([eventDate, submissions]) => buildEventReport({ config, eventDate, state: 'closed', submissions }))
+    .filter((past) => past.summary.publishedParticipants > 0 || past.summary.withheldParticipants > 0);
+
+  return { ...current, pastEvents, totalIssuesScanned: issues.length };
+}
+
+function buildEventReport({ config, eventDate, state, submissions }) {
+  const valid = submissions.filter((submission) => submission.valid);
   const latestByAuthorEventModule = new Map();
 
   for (const submission of valid) {
-    const dedupeKey = `${submission.authorKey}::${config.event.id}::${submission.moduleId}`;
+    const dedupeKey = `${submission.authorKey}::${submission.eventDate}::${submission.moduleId}`;
     const previous = latestByAuthorEventModule.get(dedupeKey);
     if (!previous || compareSubmissionRecency(submission, previous) > 0) {
       latestByAuthorEventModule.set(dedupeKey, submission);
@@ -316,14 +398,17 @@ export function aggregateLeaderboard({ issues, config }) {
     'verifiedTotalScore'
   );
   const eligibleRows = verifiedRows.filter((row) => row.eligibleForWinner);
-  const winners = config.event.state === 'closed' ? selectWinners(eligibleRows) : [];
+  const winners = state === 'closed' ? selectWinners(eligibleRows) : [];
 
   return {
     generatedAt: new Date().toISOString(),
     event: {
-      id: config.event.id,
+      id: buildEventId(config, eventDate),
+      slug: config.event.slug,
+      date: eventDate,
       name: config.event.name,
-      state: config.event.state
+      timeZone: config.event.timeZone,
+      state
     },
     pages: config.pages,
     labels: config.labels,
@@ -333,9 +418,9 @@ export function aggregateLeaderboard({ issues, config }) {
     verifiedStandings: verifiedRows,
     winners,
     summary: {
-      issuesScanned: issues.length,
+      issuesScanned: submissions.length,
       validIssues: valid.length,
-      invalidIssues: evaluated.length - valid.length,
+      invalidIssues: submissions.length - valid.length,
       selectedModuleSubmissions: selected.length,
       withdrawnModuleSubmissions: selected.filter((submission) => submission.state === 'closed').length,
       publishedParticipants: publishedParticipants.length,
@@ -501,6 +586,7 @@ export function createPublicReport(report) {
       }))
     },
     summary: report.summary,
+    pastEvents: (report.pastEvents ?? []).map((past) => ({ id: past.event.id, date: past.event.date })),
     provisionalStandings: report.provisionalStandings.map((row) => sanitizeStandingRow(row, false)),
     verifiedStandings: report.verifiedStandings.map((row) => sanitizeStandingRow(row, true)),
     winners: report.winners
@@ -518,8 +604,10 @@ function sanitizeStandingRow(row, verifiedOnly) {
   };
 }
 
-export function buildHtml(report) {
-  const title = escapeHtml(report.pages.title);
+export function buildHtml(report, options = {}) {
+  const archive = options.archive === true;
+  const eventDate = escapeHtml(report.event?.date ?? '');
+  const title = escapeHtml(archive && eventDate ? `${report.pages.title} — ${report.event.date}` : report.pages.title);
   const description = escapeHtml(report.pages.description);
   const state = escapeHtml(report.event.state);
   const verifiedLabel = escapeHtml(report.labels.verified);
@@ -536,12 +624,19 @@ export function buildHtml(report) {
   const board = renderBoard(rows, modules, verifiedByAlias, maxCumulative);
   const winnerSection = renderWinnerSection(report);
   const refreshSeconds = report.pages.refreshSeconds;
-  const refreshTag = Number.isInteger(refreshSeconds) && refreshSeconds >= 15 && refreshSeconds <= 600
+  // An archived board is final, so it never needs to poll for updates.
+  const refreshTag = !archive && Number.isInteger(refreshSeconds) && refreshSeconds >= 15 && refreshSeconds <= 600
     ? `\n  <meta http-equiv="refresh" content="${refreshSeconds}">`
     : '';
   const refreshNote = refreshTag
     ? `This page refreshes itself every ${refreshSeconds} seconds.`
     : 'Reload this page to pick up the latest scores.';
+  const pastEventCount = (report.pastEvents ?? []).length;
+  const nav = archive
+    ? '<p class="nav"><a href="../../">&larr; Current leaderboard</a> &middot; <a href="../">All past events</a></p>'
+    : pastEventCount > 0
+      ? `<p class="nav"><a href="events/">Past events (${pastEventCount})</a></p>`
+      : '';
 
   const playerCount = rows.length;
   const topScore = rows.length > 0 ? rows[0].totalScore : 0;
@@ -597,6 +692,8 @@ export function buildHtml(report) {
     tr.me { background: #dafbe1 !important; outline: 2px solid #1a7f37; }
     tr.hidden { display: none; }
     .empty { padding: 1.5rem 0; }
+    .nav { margin: 0.75rem 0 0; }
+    .nav a { color: #0969da; }
     details { margin-top: 0.5rem; }
     summary { cursor: pointer; color: #57606a; }
     @media (max-width: 700px) { body { padding: 1rem 0.75rem 2rem; } th, td { padding: 0.5rem 0.35rem; } .parts { display: none; } }
@@ -608,6 +705,7 @@ export function buildHtml(report) {
       <h1>${title}</h1>
       <p class="muted">${description}</p>
       <p class="headline">${headline}</p>
+      ${nav}
       ${closedNote}
     </section>
 
@@ -629,7 +727,7 @@ export function buildHtml(report) {
 
     <section class="card small muted">
       <p>Last updated ${updatedMarkup}. ${refreshNote}</p>
-      <p>Event state: ${state}. This page publishes only alias and score data. Evidence, prompts, author identities, and repository content are never included.</p>
+      <p>Event state: ${state}. Event date: ${eventDate}. This page publishes only alias and score data. Evidence, prompts, author identities, and repository content are never included.</p>
       <details>
         <summary>How scoring works</summary>
         <ul>${scoringRules}</ul>
@@ -756,11 +854,75 @@ function renderWinnerSection(report) {
   <p class="muted small">Ties are shared. There is no speed tie-break.</p>`;
 }
 
+export function buildEventsIndexHtml(report) {
+  const title = escapeHtml(`${report.pages.title} — past events`);
+  const pastEvents = report.pastEvents ?? [];
+  const items = pastEvents
+    .map((past) => {
+      const date = escapeHtml(past.event.date);
+      const players = past.provisionalStandings.length;
+      const topScore = players > 0 ? past.provisionalStandings[0].totalScore : 0;
+      const winners = past.winners.length > 0
+        ? past.winners.map((winner) => escapeHtml(winner.alias)).join(', ')
+        : 'no confirmed winner';
+      return `<li><a href="./${date}/">${date}</a> &middot; ${players} ${players === 1 ? 'player' : 'players'} &middot; top score ${topScore} &middot; ${winners}</li>`;
+    })
+    .join('');
+  const body = pastEvents.length > 0
+    ? `<ul>${items}</ul>`
+    : '<p class="muted">No past events yet.</p>';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${title}</title>
+  <style>
+    :root { color-scheme: light; }
+    body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; margin: 0; padding: 2rem 1.5rem 3rem; background: #ffffff; color: #1f2328; }
+    main { max-width: 900px; margin: 0 auto; }
+    h1 { letter-spacing: -0.02em; }
+    .card { background: #ffffff; border: 1px solid #d0d7de; border-radius: 14px; padding: 1.25rem 1.5rem; }
+    .muted { color: #57606a; }
+    ul { padding-left: 1.2rem; }
+    li { margin-bottom: 0.5rem; }
+    a { color: #0969da; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>${title}</h1>
+      <p class="nav"><a href="../">&larr; Current leaderboard</a></p>
+      ${body}
+      <p class="muted">Each past board is final. It publishes only alias and score data.</p>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
 export async function writeSite(outputDir, report) {
   const resolvedOutputDir = path.resolve(outputDir);
   await mkdir(resolvedOutputDir, { recursive: true });
   await writeFile(path.join(resolvedOutputDir, 'index.html'), buildHtml(report), 'utf8');
   await writeFile(path.join(resolvedOutputDir, 'leaderboard.json'), `${JSON.stringify(createPublicReport(report), null, 2)}\n`, 'utf8');
   await writeFile(path.join(resolvedOutputDir, '.nojekyll'), '\n', 'utf8');
+
+  const pastEvents = report.pastEvents ?? [];
+  if (pastEvents.length > 0) {
+    const eventsDir = path.join(resolvedOutputDir, 'events');
+    await mkdir(eventsDir, { recursive: true });
+    await writeFile(path.join(eventsDir, 'index.html'), buildEventsIndexHtml(report), 'utf8');
+
+    for (const past of pastEvents) {
+      const eventDir = path.join(eventsDir, past.event.date);
+      await mkdir(eventDir, { recursive: true });
+      await writeFile(path.join(eventDir, 'index.html'), buildHtml(past, { archive: true }), 'utf8');
+      await writeFile(path.join(eventDir, 'leaderboard.json'), `${JSON.stringify(createPublicReport(past), null, 2)}\n`, 'utf8');
+    }
+  }
+
   return resolvedOutputDir;
 }

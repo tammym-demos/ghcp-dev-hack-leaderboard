@@ -36,15 +36,25 @@ Self-contained event-repository template for an optional workshop-wide leaderboa
    - `leaderboard.config.json`
    - `.github/ISSUE_TEMPLATE/leaderboard-submission.yml`
    - `.github/workflows/publish-leaderboard.yml`
-4. Set the event id and event state in `leaderboard.config.json`.
-5. If you change the event id, update the issue-form title and placeholder in `.github/ISSUE_TEMPLATE/leaderboard-submission.yml`.
+4. Set the event slug and time zone in `leaderboard.config.json`.
 
 ## Event configuration
 
+Each hack gets its own leaderboard automatically. The **calendar day in `event.timeZone` is
+the event**, and a submission belongs to the day its issue was created. The board rolls over
+on its own at local midnight, so there is nothing to stamp, rotate, or reset between hacks,
+and participants are never asked for an event id.
+
 `leaderboard.config.json` controls:
 
-- `event.id` - required value participants must submit.
-- `event.state` - `open` or `closed`.
+- `event.slug` - kebab-case prefix for the generated event id, such as `ghcp-dev-hack-2026-08-23`.
+- `event.timeZone` - IANA time zone that decides when one hack's board becomes the next.
+- `event.state` - derived, never set by hand. The current day is `closed` only when
+  `event.closedOn` matches it; every past day is always `closed`.
+- `event.closedOn` - optional `YYYY-MM-DD`. Set it to today to announce winners live before
+  the day ends. A value left over from a previous hack is ignored automatically.
+- `event.date` - optional `YYYY-MM-DD` pin. Omit it for normal automatic rollover; set it to
+  rehearse, or to hold one board open for a hack that runs past local midnight.
 - `labels.submission` - issue label used for leaderboard intake.
 - `labels.verified` - facilitator-only verification label.
 - `pages.refreshSeconds` - optional projected-board reload interval, 15-600 seconds.
@@ -63,14 +73,17 @@ The kit enforces these approved workshop rules:
 - Participants submit one issue per module with the issue form.
 - Participants do **not** need `workflow_dispatch`, `repository_dispatch`, personal access tokens, or other repository credentials.
 - To correct a score, edit the existing issue.
-- Deduplication is by issue author + event id + module using the latest updated valid submission.
+- Deduplication is by issue author + event day + module using the latest updated valid submission.
 
 ## Facilitator operations
 
 - Apply the `verified-score` label only after verifying a module score.
-- Change `event.state` to `closed` when the event is finished.
+- Set `event.closedOn` to today's date to announce winners live before the day ends. This is
+  optional: once the day rolls over, that board is archived as final and announces its winners
+  anyway, and a stale `closedOn` from a previous hack is ignored.
 - Winners are only announced after the event is closed.
 - If two or more eligible participants tie for the highest verified cumulative total, they are co-winners.
+- Aliases must be unique within one event day. The same alias may be reused at a later hack.
 
 ## Privacy and safety
 
@@ -95,15 +108,24 @@ All rendered HTML is escaped. The workflow uses least privilege, avoids `pull_re
 - Withdrawal: close the latest valid submission issue for that module.
 - Re-entry: reopen the withdrawn issue or edit/create a newer valid submission.
 
-If duplicates exist, only the latest updated valid submission for the same author, event id, and module is used.
+If duplicates exist, only the latest updated valid submission for the same author, event day, and module is used.
 
 ## Archive guidance
 
+Past events are published automatically. Every earlier day holding at least one valid
+submission is rendered at `events/<YYYY-MM-DD>/`, listed at `events/`, and linked from the
+current board as **Past events**. Archived boards are always final, so they announce their
+winners even if the facilitator never closed them on the day.
+
+Archived boards are rebuilt from the issues each run rather than frozen, so **do not close
+old submission issues**: a closed submission counts as withdrawn and would disappear from its
+archived day.
+
 After the event:
 
-1. Set `event.state` to `closed`.
+1. Optionally set `event.closedOn` to today's date to announce winners before the day rolls over.
 2. Run the workflow once manually with `workflow_dispatch`.
-3. Download and retain the final Pages artifact if you need an event archive.
+3. Download and retain the final Pages artifact if you need an off-site event archive.
 4. Optionally disable the issue form or archive the repository.
 
 ## Local usage

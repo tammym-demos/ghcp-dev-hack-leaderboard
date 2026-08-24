@@ -41,8 +41,10 @@ rebuild the portal.
    unlabelled and no later build will ever see it. If the publish command
    warns that it could not manage labels, its token is missing Issues read and
    write; create them by hand before the event.
-6. Confirm `leaderboard.config.json` has the right `event.id` and
-   `event.state: open`.
+6. Confirm `leaderboard.config.json` has the right `event.slug` and `event.timeZone`. You do
+   **not** set an event id, and you do not reset anything: the calendar day in
+   `event.timeZone` is the event, so a new hack starts a new board on its own. If a previous
+   hack left `event.closedOn` behind, leave it — it only applies to the day it names.
 7. Run the workflow once with **Run workflow** (`workflow_dispatch`) and confirm
    the Pages site publishes an empty board.
 8. Submit one throwaway issue with a disposable alias, confirm it appears in
@@ -80,7 +82,7 @@ room progress by asking the room, not by trying to de-anonymize the board.
 The build counts invalid submissions in the summary but never publishes their
 content. Common causes:
 
-- wrong or missing event id
+- wrong module, alias, or score for the event day
 - alias outside the 3-24 character policy
 - unrecognized module
 - a score that violates the module's range or increment
@@ -88,14 +90,46 @@ content. Common causes:
 
 Ask the participant to edit their issue; the next build picks up the correction.
 
+## Each new hack
+
+Nothing to do. The calendar day in `event.timeZone` (`America/New_York`) is the event, so a
+new hack automatically starts on an empty board and the previous hack becomes a past event.
+A scheduled run shortly after local midnight rolls the published board over even before the
+first submission of the day arrives.
+
+Two cases need an explicit `event.date` pin in `leaderboard.config.json`:
+
+- **A hack running past local midnight.** Pin `event.date` to the start day so late scores
+  land on the same board, then remove the pin afterwards.
+- **A rehearsal.** Pin the day you want to preview.
+
+Leaving a stale `event.date` pinned is the one thing that stops the board rolling over, so
+remove it when you are done.
+
+## Reviewing past hacks
+
+Past boards publish themselves. Each earlier day that holds at least one valid submission is
+rendered at `events/<YYYY-MM-DD>/`, indexed at `events/`, and linked from the current board as
+**Past events**. Past boards are always final and announce their winners.
+
+Past boards are rebuilt from the issues on every run rather than frozen, so **do not close old
+submission issues** after an event. A closed submission counts as withdrawn and would vanish
+from its archived day. If you need a permanent off-site copy, download the Pages artifact.
+
 ## Closing the event
 
-1. Set `event.state` to `closed` in `leaderboard.config.json` and commit.
+Closing is optional. Once the day rolls over, that board is archived as final and announces
+its winners anyway. Close it explicitly when you want to announce winners live, in the room,
+before the day ends.
+
+1. Set `event.closedOn` to today's date in `event.timeZone`, for example
+   `"closedOn": "2026-08-23"`, in `leaderboard.config.json` and commit.
 2. Run the workflow once manually.
 3. The winner section then publishes the highest **verified** cumulative total.
    Tied participants are announced as co-winners; there is no speed tie-breaker.
-4. Download and retain the final Pages artifact if you need an event archive.
-5. Optionally disable the issue form or archive the repository.
+4. Download and retain the final Pages artifact if you need an off-site event archive.
+5. Leave `closedOn` in place. It names one day, so the next hack's board opens normally
+   without any cleanup.
 
 ## Troubleshooting
 

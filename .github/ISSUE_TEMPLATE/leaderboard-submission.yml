@@ -1,6 +1,6 @@
 name: Leaderboard module submission
 description: Submit an opt-in alias and self-reported module score for the workshop leaderboard.
-title: "[Leaderboard] ghcp-dev-hack - "
+title: "[Leaderboard] "
 labels:
   - leaderboard-submission
 body:
@@ -9,17 +9,11 @@ body:
       value: |
         Submit one issue per module. Edit the same issue to correct a score. Closing the latest valid issue withdraws that module submission.
 
+        Your submission is counted against the event running on the day you open this issue, so there is nothing for you to select.
+
         **Choose a made-up alias, not your real name.** Your alias and score are published on the shared workshop leaderboard, and this issue is visible to everyone who can see this repository. Your GitHub account is already attached to the issue you open, so the alias is what keeps your score entry itself non-identifying. Pick something fun, such as `mergewell-runner`, `curious-otter`, or `night-shift-42`. Avoid your real name, work username, email address, employer, or customer names.
 
         Use the same alias for all three modules so your scores add up into one standing.
-  - type: input
-    id: event-id
-    attributes:
-      label: Event ID
-      description: Must match the configured event id.
-      placeholder: ghcp-dev-hack
-    validations:
-      required: true
   - type: input
     id: opt-in-alias
     attributes:

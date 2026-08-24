@@ -9,6 +9,9 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const configPath = options.config ?? DEFAULT_CONFIG;
   const config = await loadConfig(configPath);
+  if (options.eventDate) {
+    config.event.date = options.eventDate;
+  }
   const issues = options.input
     ? await readJsonFile(options.input)
     : await fetchIssuesFromGitHub({
@@ -21,9 +24,12 @@ async function main() {
   const outputDir = await writeSite(options.out ?? DEFAULT_OUTPUT, report);
 
   console.log(`Built sanitized leaderboard site in ${outputDir}`);
-  console.log(`Issues scanned: ${report.summary.issuesScanned}`);
+  console.log(`Current event: ${report.event.id}`);
+  console.log(`Issues fetched: ${report.totalIssuesScanned}`);
+  console.log(`Issues scanned for this event: ${report.summary.issuesScanned}`);
   console.log(`Published participants: ${report.summary.publishedParticipants}`);
   console.log(`Withheld participants: ${report.summary.withheldParticipants}`);
+  console.log(`Past events published: ${report.pastEvents.length}`);
 }
 
 function parseArgs(argv) {
@@ -48,6 +54,9 @@ function parseArgs(argv) {
     } else if (current === '--api-base-url') {
       options.apiBaseUrl = next;
       index += 1;
+    } else if (current === '--event-date') {
+      options.eventDate = next;
+      index += 1;
     } else if (current === '--help') {
       printHelp();
       process.exit(0);
@@ -61,7 +70,7 @@ function parseArgs(argv) {
 
 function printHelp() {
   const scriptPath = path.relative(process.cwd(), fileURLToPath(import.meta.url));
-  console.log(`Usage: node ${scriptPath} [--config file] [--input file] [--out dir] [--repository owner/name] [--api-base-url url]`);
+  console.log(`Usage: node ${scriptPath} [--config file] [--input file] [--out dir] [--repository owner/name] [--api-base-url url] [--event-date YYYY-MM-DD]`);
 }
 
 async function fetchIssuesFromGitHub({ apiBaseUrl, repository, token, label }) {

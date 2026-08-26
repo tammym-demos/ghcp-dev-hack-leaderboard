@@ -366,6 +366,57 @@ test('ranks a 45-point Foundations submission above a 40-point submission', () =
   );
 });
 
+test('ranks tied scores by earliest creation time', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 74, login: 'participant-015', userId: 1015, updatedAt: '2026-08-01T10:30:00Z', alias: 'Early Bird', module: 'Foundations', core: '40', bonus: '10' }),
+      makeIssue({ number: 75, login: 'participant-016', userId: 1016, updatedAt: '2026-08-01T10:00:00Z', alias: 'Quick Learner', module: 'Foundations', core: '40', bonus: '10' })
+    ]
+  });
+
+  assert.equal(report.summary.invalidIssues, 0);
+  assert.deepEqual(
+    report.provisionalStandings.map((row) => [row.alias, row.totalScore, row.rank]),
+    [['Quick Learner', 50, 1], ['Early Bird', 50, 2]]
+  );
+  assert.equal(report.provisionalStandings[0].alias, 'Quick Learner', 'Quick Learner created first and ranks first despite same score');
+  assert.equal(report.provisionalStandings[1].alias, 'Early Bird', 'Early Bird created later and ranks second');
+});
+
+test('uses alias as a deterministic fallback for matching scores and creation times', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 76, login: 'participant-017', userId: 1017, updatedAt: '2026-08-01T10:00:00Z', alias: 'Zulu Tie', module: 'Foundations', core: '40', bonus: '10' }),
+      makeIssue({ number: 77, login: 'participant-018', userId: 1018, updatedAt: '2026-08-01T10:00:00Z', alias: 'Alpha Tie', module: 'Foundations', core: '40', bonus: '10' })
+    ]
+  });
+
+  assert.deepEqual(
+    report.provisionalStandings.map((row) => [row.alias, row.totalScore, row.rank]),
+    [['Alpha Tie', 50, 1], ['Zulu Tie', 50, 1]]
+  );
+});
+
+test('shows all participants including those with zero verified score', () => {
+  const report = aggregateLeaderboard({
+    config: cloneConfig(),
+    issues: [
+      makeIssue({ number: 78, login: 'participant-019', userId: 1019, updatedAt: '2026-08-01T10:00:00Z', alias: 'Verified Participant', module: 'Foundations', core: '40', bonus: '10', labels: ['leaderboard-submission', 'verified-score'] }),
+      makeIssue({ number: 79, login: 'participant-020', userId: 1020, updatedAt: '2026-08-01T10:05:00Z', alias: 'Unverified Participant', module: 'Foundations', core: '50', bonus: '10', labels: ['leaderboard-submission'] })
+    ]
+  });
+
+  assert.equal(report.summary.invalidIssues, 0);
+  assert.equal(report.provisionalStandings.length, 2, 'both participants appear in provisional standings');
+  assert.equal(report.verifiedStandings.length, 2, 'both participants appear in verified standings (even with 0 verified score)');
+
+  const verified = report.verifiedStandings.find((row) => row.alias === 'Unverified Participant');
+  assert.ok(verified, 'unverified participant is in verified standings');
+  assert.equal(verified.verifiedTotalScore, 0, 'unverified participant has 0 verified score');
+});
+
 test('renders a bounded projection refresh and rejects an out-of-range value', () => {
   const report = aggregateLeaderboard({
     config: cloneConfig(),

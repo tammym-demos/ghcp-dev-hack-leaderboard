@@ -393,8 +393,7 @@ function buildEventReport({ config, eventDate, state, submissions }) {
   );
   const verifiedRows = rankRows(
     publishedParticipants
-      .map((participant) => buildStandingRow(participant, config.modules, true))
-      .filter((row) => row.includedModuleCount > 0),
+      .map((participant) => buildStandingRow(participant, config.modules, true)),
     'verifiedTotalScore'
   );
   const eligibleRows = verifiedRows.filter((row) => row.eligibleForWinner);
@@ -490,9 +489,14 @@ function buildStandingRow(participant, modules, verifiedOnly) {
   let allModulesCompleted = true;
   let allModulesPresent = true;
   let includedModuleCount = 0;
+  let earliestCreatedAtMs = Infinity;
 
   for (const module of modules) {
     const submission = participant.modules.get(module.id);
+    if (submission && submission.createdAtMs < earliestCreatedAtMs) {
+      earliestCreatedAtMs = submission.createdAtMs;
+    }
+
     const included = Boolean(submission && (!verifiedOnly || submission.verified));
     const cell = included
       ? {
@@ -529,7 +533,8 @@ function buildStandingRow(participant, modules, verifiedOnly) {
     includedModuleCount,
     completedModuleCount,
     allModulesCompleted: !verifiedOnly && allModulesCompleted && allModulesPresent,
-    eligibleForWinner: verifiedOnly && allModulesCompleted && allModulesPresent
+    eligibleForWinner: verifiedOnly && allModulesCompleted && allModulesPresent,
+    earliestCreatedAtMs
   };
 }
 
@@ -539,16 +544,20 @@ function rankRows(rows, totalKey) {
       return right[totalKey] - left[totalKey];
     }
 
+    if (left.earliestCreatedAtMs !== right.earliestCreatedAtMs) {
+      return left.earliestCreatedAtMs - right.earliestCreatedAtMs;
+    }
+
     return left.alias.localeCompare(right.alias, 'en', { sensitivity: 'base' });
   });
 
-  let lastTotal = null;
+  let lastRankKey = null;
   let lastRank = 0;
 
   return sorted.map((row, index) => {
-    const currentTotal = row[totalKey];
-    const rank = currentTotal === lastTotal ? lastRank : index + 1;
-    lastTotal = currentTotal;
+    const rankKey = `${row[totalKey]}::${row.earliestCreatedAtMs}`;
+    const rank = rankKey === lastRankKey ? lastRank : index + 1;
+    lastRankKey = rankKey;
     lastRank = rank;
     return { ...row, rank };
   });

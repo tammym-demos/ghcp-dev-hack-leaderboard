@@ -65,8 +65,9 @@ rebuild the portal.
 - Bonus is capped at 10 per module. The maximum cumulative score is 180.
 - Verification cadence: verify at each module debrief rather than continuously.
   Spot-check the participant's exported case file, then apply `verified-score`.
-- Corrections: the participant edits their own issue. Withdrawal: the participant
-  closes it. Re-entry: reopen or submit a newer issue.
+- Corrections: the participant edits their own issue. A body edit clears
+  `verified-score`, so review the corrected score before applying the label again.
+  Withdrawal: the participant closes it. Re-entry: reopen or submit a newer issue.
 - If two participants pick the same alias, the builder withholds both from the
   published board until one alias changes. Ask them to edit their issues.
 

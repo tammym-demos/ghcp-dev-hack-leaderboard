@@ -72,7 +72,9 @@ The kit enforces these approved workshop rules:
 
 - Participants submit one issue per module with the issue form.
 - Participants do **not** need `workflow_dispatch`, `repository_dispatch`, personal access tokens, or other repository credentials.
-- To correct a score, edit the existing issue.
+- To correct a score, edit the existing issue. Editing its body clears the
+  facilitator's verification label, so the corrected score returns to
+  provisional standings until it is reviewed and verified again.
 - Deduplication is by issue author + event day + module using the latest updated valid submission.
 
 ## Facilitator operations
@@ -105,6 +107,8 @@ All rendered HTML is escaped. The workflow uses least privilege, avoids `pull_re
 ## Correction and withdrawal
 
 - Correction: edit the existing submission issue for that module.
+- A body edit removes `verified-score`; review the corrected submission before
+  applying the label again.
 - Withdrawal: close the latest valid submission issue for that module.
 - Re-entry: reopen the withdrawn issue or edit/create a newer valid submission.
 

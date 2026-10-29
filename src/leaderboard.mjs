@@ -335,13 +335,10 @@ function isChecked(value) {
 }
 
 export function aggregateLeaderboard({ issues, config, now = Date.now() }) {
-  const evaluated = issues.map((issue) => evaluateIssueSubmission(issue, config));
-  return { ...aggregateSubmissions({ submissions: evaluated, config, now }), totalIssuesScanned: issues.length };
-}
-
-export function aggregateSubmissions({ submissions: evaluated, config, now = Date.now() }) {
   validateConfig(config, 'config');
+
   const currentEventDate = resolveEventDate(config, now);
+  const evaluated = issues.map((issue) => evaluateIssueSubmission(issue, config));
   const byEventDate = new Map();
 
   for (const submission of evaluated) {
@@ -370,7 +367,7 @@ export function aggregateSubmissions({ submissions: evaluated, config, now = Dat
     .map(([eventDate, submissions]) => buildEventReport({ config, eventDate, state: 'closed', submissions }))
     .filter((past) => past.summary.publishedParticipants > 0 || past.summary.withheldParticipants > 0);
 
-  return { ...current, pastEvents };
+  return { ...current, pastEvents, totalIssuesScanned: issues.length };
 }
 
 function buildEventReport({ config, eventDate, state, submissions }) {
@@ -645,9 +642,9 @@ export function buildHtml(report, options = {}) {
     : 'Reload this page to pick up the latest scores.';
   const pastEventCount = (report.pastEvents ?? []).length;
   const nav = archive
-    ? `<p class="nav"><a href="${escapeHtml(options.currentUrl ?? '../../')}">&larr; Current leaderboard</a> &middot; <a href="${escapeHtml(options.eventsUrl ?? '../')}">All past events</a></p>`
+    ? '<p class="nav"><a href="../../">&larr; Current leaderboard</a> &middot; <a href="../">All past events</a></p>'
     : pastEventCount > 0
-      ? `<p class="nav"><a href="${escapeHtml(options.eventsUrl ?? 'events/')}">Past events (${pastEventCount})</a></p>`
+      ? `<p class="nav"><a href="events/">Past events (${pastEventCount})</a></p>`
       : '';
 
   const playerCount = rows.length;
@@ -866,19 +863,18 @@ function renderWinnerSection(report) {
   <p class="muted small">Ties are shared. There is no speed tie-break.</p>`;
 }
 
-export function buildEventsIndexHtml(report, options = {}) {
+export function buildEventsIndexHtml(report) {
   const title = escapeHtml(`${report.pages.title} — past events`);
   const pastEvents = report.pastEvents ?? [];
   const items = pastEvents
     .map((past) => {
       const date = escapeHtml(past.event.date);
-      const players = past.summary.publishedParticipants;
+      const players = past.provisionalStandings.length;
       const topScore = players > 0 ? past.provisionalStandings[0].totalScore : 0;
       const winners = past.winners.length > 0
         ? past.winners.map((winner) => escapeHtml(winner.alias)).join(', ')
         : 'no confirmed winner';
-      const href = options.archivePrefix ? `${options.archivePrefix}${past.event.date}` : `./${past.event.date}/`;
-      return `<li><a href="${escapeHtml(href)}">${date}</a> &middot; ${players} ${players === 1 ? 'player' : 'players'} &middot; top score ${topScore} &middot; ${winners}</li>`;
+      return `<li><a href="./${date}/">${date}</a> &middot; ${players} ${players === 1 ? 'player' : 'players'} &middot; top score ${topScore} &middot; ${winners}</li>`;
     })
     .join('');
   const body = pastEvents.length > 0
@@ -907,7 +903,7 @@ export function buildEventsIndexHtml(report, options = {}) {
   <main>
     <section class="card">
       <h1>${title}</h1>
-      <p class="nav"><a href="${escapeHtml(options.currentUrl ?? '../')}">&larr; Current leaderboard</a></p>
+      <p class="nav"><a href="../">&larr; Current leaderboard</a></p>
       ${body}
       <p class="muted">Each past board is final. It publishes only alias and score data.</p>
     </section>

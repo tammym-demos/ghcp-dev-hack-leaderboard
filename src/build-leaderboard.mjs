@@ -1,14 +1,12 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aggregateLeaderboard, loadConfig, readJsonFile, resolveEventDate, writeSite } from './leaderboard.mjs';
-import { writeLiveSite } from './live-site.mjs';
+import { aggregateLeaderboard, loadConfig, readJsonFile, writeSite } from './leaderboard.mjs';
 
 const DEFAULT_CONFIG = 'leaderboard.config.json';
 const DEFAULT_OUTPUT = 'site';
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const apiUrl = !options.input ? process.env.LEADERBOARD_API_URL : undefined;
   const configPath = options.config ?? DEFAULT_CONFIG;
   const config = await loadConfig(configPath);
   if (options.eventDate) {
@@ -22,11 +20,8 @@ async function main() {
         token: process.env.GITHUB_TOKEN,
         label: config.labels.submission
       });
-  if (apiUrl) config.event.closedOn = resolveEventDate(config);
   const report = aggregateLeaderboard({ issues, config });
-  const outputDir = apiUrl
-    ? await writeLiveSite(options.out ?? DEFAULT_OUTPUT, apiUrl, report)
-    : await writeSite(options.out ?? DEFAULT_OUTPUT, report);
+  const outputDir = await writeSite(options.out ?? DEFAULT_OUTPUT, report);
 
   console.log(`Built sanitized leaderboard site in ${outputDir}`);
   console.log(`Current event: ${report.event.id}`);

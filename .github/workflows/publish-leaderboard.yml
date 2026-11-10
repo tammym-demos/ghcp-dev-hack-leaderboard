@@ -24,7 +24,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  invalidate-verification:
+    if: github.event_name == 'issues' && github.event.action == 'edited' && github.event.changes.body != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Remove stale score verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          labels=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/labels" --jq '.[].name')
+          if grep --fixed-strings --line-regexp --quiet 'verified-score' <<< "$labels"; then
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/labels/verified-score"
+          fi
+
   build:
+    needs: invalidate-verification
+    if: ${{ !cancelled() && needs.invalidate-verification.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -44,6 +63,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_API_URL: ${{ github.api_url }}
+          LEADERBOARD_API_URL: ${{ vars.LEADERBOARD_API_URL }}
         run: node src/build-leaderboard.mjs --config leaderboard.config.json --out site
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa

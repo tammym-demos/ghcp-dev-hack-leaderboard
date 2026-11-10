@@ -4,13 +4,9 @@ Self-contained event-repository template for an optional workshop-wide leaderboa
 
 ## What this kit does
 
-- Supports account-free submissions through a separately deployed Azure Functions
-  app; see [setup and API operations](./RUNBOOK.md#account-free-azure-route).
-- Keeps the GitHub Issue Form as the legacy route until an environment is switched.
+- Accepts participant submissions through a GitHub Issue Form.
 - Rebuilds standings on issue open, edit, label change, reopen, close, or manual dispatch.
-- Uses deterministic Node.js 22 scoring; no Copilot or AI scoring. The static
-  Issues-based builder needs no runtime npm dependencies; the optional Azure app
-  uses pinned Azure SDKs.
+- Uses a deterministic Node.js 22 script only; no Copilot, no AI scoring, no runtime npm dependencies.
 - Publishes a sanitized GitHub Pages artifact containing:
   - `index.html`
   - `leaderboard.json`
@@ -74,19 +70,9 @@ The kit enforces these approved workshop rules:
 
 ## Participant operations
 
-For an account-free event, use the score form from the mission page. It selects
-the current day automatically, accepts the prefilled module totals, and asks for
-two acknowledgements. Reuse the same browser and alias for all modules. Save the
-private recovery key if you might switch browsers. Reopen the form to correct or
-withdraw a module. Changes clear facilitator verification.
-
-For legacy GitHub events:
-
 - Participants submit one issue per module with the issue form.
 - Participants do **not** need `workflow_dispatch`, `repository_dispatch`, personal access tokens, or other repository credentials.
-- To correct a score, edit the existing issue. Editing its body clears the
-  facilitator's verification label, so the corrected score returns to
-  provisional standings until it is reviewed and verified again.
+- To correct a score, edit the existing issue.
 - Deduplication is by issue author + event day + module using the latest updated valid submission.
 
 ## Facilitator operations
@@ -119,8 +105,6 @@ All rendered HTML is escaped. The workflow uses least privilege, avoids `pull_re
 ## Correction and withdrawal
 
 - Correction: edit the existing submission issue for that module.
-- A body edit removes `verified-score`; review the corrected submission before
-  applying the label again.
 - Withdrawal: close the latest valid submission issue for that module.
 - Re-entry: reopen the withdrawn issue or edit/create a newer valid submission.
 
